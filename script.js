@@ -2,9 +2,40 @@ class CurrencyConverter {
   constructor() {
     this.exchangeRates = {};
     this.lastUpdate = null;
+    this.isLoading = false;
+    this.conversionHistory = JSON.parse(
+      localStorage.getItem("conversionHistory") || "[]"
+    );
+    this.chart = null;
+    this.currencies = {
+      USD: { name: "US Dollar", flag: "🇺🇸" },
+      EUR: { name: "Euro", flag: "🇪🇺" },
+      GBP: { name: "British Pound", flag: "🇬🇧" },
+      JPY: { name: "Japanese Yen", flag: "🇯🇵" },
+      AUD: { name: "Australian Dollar", flag: "🇦🇺" },
+      CAD: { name: "Canadian Dollar", flag: "🇨🇦" },
+      CHF: { name: "Swiss Franc", flag: "🇨🇭" },
+      CNY: { name: "Chinese Yuan", flag: "🇨🇳" },
+      INR: { name: "Indian Rupee", flag: "🇮🇳" },
+      KRW: { name: "South Korean Won", flag: "🇰🇷" },
+      SGD: { name: "Singapore Dollar", flag: "🇸🇬" },
+      NZD: { name: "New Zealand Dollar", flag: "🇳🇿" },
+      MXN: { name: "Mexican Peso", flag: "🇲🇽" },
+      BRL: { name: "Brazilian Real", flag: "🇧🇷" },
+      RUB: { name: "Russian Ruble", flag: "🇷🇺" },
+      ZAR: { name: "South African Rand", flag: "🇿🇦" },
+      NOK: { name: "Norwegian Krone", flag: "🇳🇴" },
+      SEK: { name: "Swedish Krona", flag: "🇸🇪" },
+      DKK: { name: "Danish Krone", flag: "🇩🇰" },
+      PLN: { name: "Polish Zloty", flag: "🇵🇱" },
+    };
     this.initializeElements();
     this.bindEvents();
     this.loadExchangeRates();
+    this.renderHistory();
+    // this.initializeChart();
+    // Make instance globally available
+    window.app = this;
   }
 
   initializeElements() {
@@ -15,57 +46,163 @@ class CurrencyConverter {
     this.swapBtn = document.getElementById("swapBtn");
     this.result = document.getElementById("result");
     this.rateInfo = document.getElementById("rateInfo");
+    this.historyList = document.getElementById("historyList");
+    this.clearHistoryBtn = document.getElementById("clearHistory");
   }
 
   bindEvents() {
     this.fromAmount.addEventListener("input", () => this.convert());
-    this.fromCurrency.addEventListener("change", () => this.convert());
-    this.toCurrency.addEventListener("change", () => this.convert());
+    this.fromCurrency.addEventListener("change", () => {
+      this.loadExchangeRates();
+      this.convert();
+      this.updateChart();
+    });
+    this.toCurrency.addEventListener("change", () => {
+      this.loadExchangeRates();
+      this.convert();
+      this.updateChart();
+    });
     this.swapBtn.addEventListener("click", () => this.swapCurrencies());
 
+    // Chart period buttons
+    document.querySelectorAll(".chart-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        document
+          .querySelectorAll(".chart-btn")
+          .forEach((b) => b.classList.remove("active"));
+        e.target.classList.add("active");
+        this.updateChart(e.target.dataset.period);
+      });
+    });
+    // Auto-refresh rates every 5 minutes
+    setInterval(() => {
+      this.loadExchangeRates();
+    }, 300000);
+
+    // Keyboard shortcuts
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "r") {
+          e.preventDefault();
+          this.refreshRates();
+        } else if (e.key === "s") {
+          e.preventDefault();
+          this.swapCurrencies();
+        }
+      }
+    });
     // Convert on page load
     setTimeout(() => this.convert(), 1000);
   }
   async loadExchangeRates() {
     try {
-      // Using a free API that doesn't require API key
-      const response = await fetch(
-        "https://api.exchangerate-api.com/v4/latest/USD"
-      );
+      this.showLoading("Fetching live rates...");
+
+      // Primary API - Free with good rate limits
+      let response = await fetch("https://api.fxratesapi.com/latest");
+
       if (!response.ok) {
-        throw new Error("Failed to fetch exchange rates");
+        // Fallback to secondary API
+        response = await fetch(
+          "https://api.exchangerate-api.com/v4/latest/USD"
+        );
       }
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch from all APIs");
+      }
+
       const data = await response.json();
       this.exchangeRates = data.rates;
-      this.lastUpdate = new Date(data.date);
-      this.convert();
-    } catch (error) {
-      console.error("Error loading exchange rates:", error);
-      // Fallback rates for offline functionality
-      this.exchangeRates = {
-        USD: 1,
-        EUR: 0.85,
-        GBP: 0.73,
-        JPY: 110.12,
-        AUD: 1.35,
-        CAD: 1.25,
-        CHF: 0.92,
-        CNY: 6.45,
-        INR: 74.5,
-        KRW: 1180.5,
-        SGD: 1.35,
-        NZD: 1.42,
-        MXN: 20.15,
-        BRL: 5.2,
-        RUB: 73.25,
-        ZAR: 14.75,
-      };
-      this.showError(
-        "Using offline rates. Connect to internet for live rates."
-      );
+      this.lastUpdate = new Date();
+
+      this.result.innerHTML =
+        '<span style="color: var(--success-color);">✅ Live rates loaded successfully!</span>';
+      setTimeout(() => this.convert(), 1000);
+
+      // Update chart with new data
+      this.updateChart();
+    } catch (Error) {
+      if (typeof console !== "undefined" && console.Error) {
+        console.Error("Error loading exchange rates:", Error);
+      }
+      await this.loadBackupRates();
     }
   }
 
+  async loadBackupRates() {
+    try {
+      // Try alternative free APIs
+      const apis = [
+        "https://open.er-api.com/v6/latest/USD",
+        "https://api.currencyapi.com/v3/latest?apikey=cur_live_free&base_currency=USD",
+      ];
+
+      for (const apiUrl of apis) {
+        try {
+          const response = await fetch(apiUrl);
+          if (response.ok) {
+            const data = await response.json();
+            this.exchangeRates = data.rates || data.data;
+            this.lastUpdate = new Date();
+            this.result.innerHTML =
+              '<span style="color: var(--warning-color);">⚠️ Using backup API</span>';
+            setTimeout(() => this.convert(), 1000);
+            return;
+          }
+        } catch (e) {
+          console.warn("Backup API failed:", apiUrl, e);
+        }
+      }
+
+      throw new Error("All APIs failed");
+    } catch (error) {
+      // Ultimate fallback with recent realistic rates
+      this.exchangeRates = {
+        USD: 1,
+        EUR: 0.9234,
+        GBP: 0.7918,
+        JPY: 149.85,
+        AUD: 1.5124,
+        CAD: 1.3642,
+        CHF: 0.8798,
+        CNY: 7.2456,
+        INR: 83.15,
+        KRW: 1327.5,
+        SGD: 1.3456,
+        NZD: 1.6234,
+        MXN: 17.89,
+        BRL: 4.95,
+        RUB: 92.5,
+        ZAR: 18.75,
+        NOK: 10.85,
+        SEK: 10.45,
+        DKK: 6.88,
+        PLN: 4.05,
+      };
+      this.lastUpdate = new Date("2025-01-15");
+      this.showError("⚠️ Using cached rates - Check internet connection");
+    }
+  }
+
+  async loadSpecificRate() {
+    const from = this.fromCurrency.value;
+    const to = this.toCurrency.value;
+
+    try {
+      const response = await fetch(
+        `https://api.fxratesapi.com/latest?base=${from}&symbols=${to}`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        Object.assign(this.exchangeRates, data.rates);
+        this.lastUpdate = new Date();
+      }
+    } catch (error) {
+      console.log("Specific rate update failed, using existing rates");
+    }
+  }
   convert() {
     const amount = parseFloat(this.fromAmount.value);
     const from = this.fromCurrency.value;
@@ -93,23 +230,59 @@ class CurrencyConverter {
     // Display result
     const rate = this.exchangeRates[to] / this.exchangeRates[from];
     this.result.className = "result";
+
+    const fromCurrency = this.currencies[from];
+    const toCurrency = this.currencies[to];
+    const fromFlag = fromCurrency?.flag || "💱";
+    const toFlag = toCurrency?.flag || "💱";
+
     this.result.innerHTML = `
-                    <div>
-                        <div style="font-size: 28px; margin-bottom: 5px;">
-                            ${convertedAmount.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })} ${to}
-                        </div>
-                        <div style="font-size: 16px; opacity: 0.9;">
-                            ${amount} ${from} = ${convertedAmount.toFixed(
+   <div class="result-amount">
+    ${toFlag} ${convertedAmount.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ${to}
+    </div>
+    <div class="result-details">
+    ${fromFlag} ${amount} ${from} = ${toFlag} ${convertedAmount.toFixed(
       2
     )} ${to}
-                        </div>
-                    </div>
-                `;
+    </div>
+  `;
+// // Add to history with proper values
+//                 const historyData = {
+//                     amount: amount,
+//                     from: from,
+//                     to: to,
+//                     result: convertedAmount,
+//                     rate: rate
+//                 };
+                
+//                 console.log('History data before adding:', historyData); // Debug log
+//     // Add to history
+//     this.addtoHistory(
+//       amount,
+//       from,
+//       to,
+//       convertedAmount.toFixed(2),
+//       rate.toFixed(4)
+//     );
 
-    // Show exchange rate info with real-time status
+    // Update rate info
+    this.updateRateInfo(from, to, rate);
+  }
+
+  updateRateInfo(from = null, to = null, rate = null) {
+    if (!from || !to || !rate) {
+      this.rateInfo.innerHTML = `
+                        <div style="margin-bottom: 10px;">Ready to convert</div>
+                        <button onclick="app.refreshRates()" class="refresh-btn">
+                            🔄 Refresh Rates
+                        </button>
+                    `;
+      return;
+    }
+
     const rateAge = this.lastUpdate
       ? Math.floor((new Date() - this.lastUpdate) / 1000 / 60)
       : null;
@@ -129,10 +302,12 @@ class CurrencyConverter {
                               }`
                             : "⚠️ Using cached rates"
                         }
-                   
+                    </div>
+                    <button onclick="app.refreshRates()" class="refresh-btn">
+                        🔄 Refresh Rates
+                    </button>
                 `;
   }
-
   swapCurrencies() {
     const tempCurrency = this.fromCurrency.value;
     this.fromCurrency.value = this.toCurrency.value;
@@ -146,9 +321,30 @@ class CurrencyConverter {
   }
 
   showError(message) {
-    this.result.className = "result error";
-    this.result.innerHTML = `<div>❌ ${message}</div>`;
-    this.rateInfo.textContent = "";
+                this.result.className = 'result error';
+                this.result.innerHTML = `<div>❌ ${message}</div>`;
+                this.rateInfo.innerHTML = `
+                    <button onclick="app.refreshRates()" class="refresh-btn">
+                        🔄 Refresh Rates
+                    </button>
+                `;
+            }
+
+  renderHistory() {
+    if (!this.historyList) return;
+    this.historyList.innerHTML = "";
+    if (!this.conversionHistory || this.conversionHistory.length === 0) {
+      this.historyList.innerHTML = "<li>No conversion history yet.</li>";
+      return;
+    }
+    this.conversionHistory.slice().reverse().forEach((item) => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span>${item.fromAmount} ${item.from} ➡️ ${item.toAmount} ${item.to}</span>
+        <span style="font-size: 11px; color: #888;">Rate: ${item.rate}</span>
+      `;
+      this.historyList.appendChild(li);
+    });
   }
 }
 
