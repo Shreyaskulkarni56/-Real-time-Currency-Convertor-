@@ -249,27 +249,28 @@ class CurrencyConverter {
     )} ${to}
     </div>
   `;
-// // Add to history with proper values
-//                 const historyData = {
-//                     amount: amount,
-//                     from: from,
-//                     to: to,
-//                     result: convertedAmount,
-//                     rate: rate
-//                 };
-                
-//                 console.log('History data before adding:', historyData); // Debug log
-//     // Add to history
-//     this.addtoHistory(
-//       amount,
-//       from,
-//       to,
-//       convertedAmount.toFixed(2),
-//       rate.toFixed(4)
-//     );
+
+    // Add to history with proper values
+    this.addToHistory(amount, from, to, convertedAmount, rate);
 
     // Update rate info
     this.updateRateInfo(from, to, rate);
+  }
+
+// Add to history method as a class method
+  addToHistory(amount, from, to, convertedAmount, rate) {
+    const entry = {
+      fromAmount: Number(amount),
+      fromCurrency: from,
+      toAmount: Number(convertedAmount),
+      toCurrency: to,
+      rate: Number(rate),
+      timestamp: new Date().toISOString()
+    };
+
+    this.conversionHistory.push(entry);
+    localStorage.setItem("conversionHistory", JSON.stringify(this.conversionHistory));
+    this.renderHistory();
   }
 
   updateRateInfo(from = null, to = null, rate = null) {
@@ -317,7 +318,10 @@ class CurrencyConverter {
     const tempAmount = this.fromAmount.value;
     this.fromAmount.value = this.toAmount.value || tempAmount;
 
-    this.convert();
+    // Update chart and convert
+                this.generateMockHistoricalData();
+                this.updateChart();
+                this.convert();
   }
 
   showError(message) {
@@ -330,25 +334,54 @@ class CurrencyConverter {
                 `;
             }
 
-  renderHistory() {
+ renderHistory() {
     if (!this.historyList) return;
     this.historyList.innerHTML = "";
+
     if (!this.conversionHistory || this.conversionHistory.length === 0) {
-      this.historyList.innerHTML = "<li>No conversion history yet.</li>";
-      return;
+        this.historyList.innerHTML = "<li>No conversion history yet.</li>";
+        document.getElementById("clear-history");
+        return;
     }
+
     this.conversionHistory.slice().reverse().forEach((item) => {
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <span>${item.fromAmount} ${item.from} ➡️ ${item.toAmount} ${item.to}</span>
-        <span style="font-size: 11px; color: #888;">Rate: ${item.rate}</span>
-      `;
-      this.historyList.appendChild(li);
+        const li = document.createElement("li");
+        li.innerHTML = `
+            <span>${item.fromAmount} ${item.fromCurrency} ➡️ ${item.toAmount.toFixed(2)} ${item.toCurrency}</span>
+            <span style="font-size: 11px; color: #888;">Rate: ${item.rate.toFixed(4)}</span>
+        `;
+        this.historyList.appendChild(li);
+        document.getElementById("clearHistory").style.display = "inline-block";
+
     });
+
+    // show button only if history exists
+    document.getElementById("clearHistory").style.display = "inline-block";
+}
+
+   clearHistory() {
+    this.conversionHistory = [];
+    localStorage.removeItem("conversionHistory");
+                  this.renderHistory();
+              }
+
+  toggleClearHistoryButton() {
+    const btn = document.getElementById("clearHistory");
+    if (!btn) return;
+
+    if (this.conversionHistory.length === 0) {
+      btn.style.display = "none";
+    } else {
+      btn.style.display = "inline-block";
+    }
   }
 }
 
-// Initialize the converter when the page loads
+// Attach clear history event and initialize on DOMContentLoaded
 document.addEventListener("DOMContentLoaded", () => {
-  new CurrencyConverter();
+  const app = new CurrencyConverter();
+  document.getElementById("clearHistory")
+    .addEventListener("click", () => app.clearHistory());
+
+  app.loadExchangeRates();
 });
