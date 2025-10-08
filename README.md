@@ -47,3 +47,7 @@ Returns exchange rates relative to USD.
 
 The app uses these rates to perform conversion calculations.
     
+🚀 Deployment
+
+Deployed on Netlify/Vercel:
+👉 [Live Demo Link] (https://crrency.netlify.app/)
